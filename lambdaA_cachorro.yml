@@ -1,0 +1,3 @@
+name: lambdaA_cachorro
+runtime: nodejs20.x
+comments: arquivo de teste 01
