@@ -50,7 +50,7 @@ Globals:
     Tracing: Active
     Layers:
       - !Ref RuntimeDependenciesLayer
-    Runtime: nodejs18.x
+    Runtime: nodejs22.x
     Architectures: 
       - arm64
     VpcConfig:
@@ -1383,4 +1383,3 @@ Resources:
           Value: !Ref Projeto
         - Key: ameninoLogGroupSquad
           Value: !Ref Squad
-          
