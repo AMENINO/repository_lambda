@@ -30,7 +30,7 @@ Conditions:
     - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], uat0]
     - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], hm99]
   isItDev: !Or
-    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev1]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev]
     - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev2]
     - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev3]
     - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev4]
