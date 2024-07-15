@@ -1,1 +1,0 @@
-Runtime: nodejs18.x
