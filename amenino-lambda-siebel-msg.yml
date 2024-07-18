@@ -50,7 +50,7 @@ Globals:
     Tracing: Active
     Layers:
       - !Ref RuntimeDependenciesLayer
-    Runtime: nodejs24.x
+    Runtime: nodejs16.x
     Architectures: 
       - arm64
     VpcConfig:
