@@ -1,0 +1,1385 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Stack para projeto amenino-lambda-salesforce-msg1000
+
+## ___________________________ PARAMETERS 👇 __________________________________
+
+Parameters:
+
+  SubEnv:
+    Type: String
+  Ambiente:
+    Type: String
+  SubAmbiente:
+    Type: String
+  Projeto:
+    Type: String
+  Squad:
+    Type: String
+
+## ___________________________ CONDITIONS 👇 __________________________________
+
+Conditions:
+
+  isItProd:
+    Fn::Or:
+      - !Equals [!Ref SubEnv, prd]
+      - !Equals [!Ref SubEnv, dog]
+      - !Equals [!Ref SubEnv, ttt]
+  isItHml: !Or
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], uat0]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], hm99]
+  isItDev: !Or
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev2]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev3]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev4]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev5]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], dev6]
+  isItHml1: !Or
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], uat0]
+    - !Equals [!Select [1, !Split ["-", !Ref "AWS::StackName"]], hml0]
+  
+## ____________________________ GLOBALS 👇 ____________________________________
+
+Globals:
+
+  Function:
+    Timeout: 30
+    MemorySize: 128
+    Tracing: Active
+    Layers:
+      - !Ref RuntimeDependenciesLayer
+    Runtime: nodejs16.x
+    Architectures: 
+      - arm64
+    VpcConfig:
+      SecurityGroupIds:
+        - Fn::ImportValue:
+            Fn::Join:
+            - '-'
+            - - cfstack
+              - !Select [1, !Split ["-", Ref: "AWS::StackName"]]
+              - amenino-cf-resources-infra-LambdaSecurityGroup
+      SubnetIds:
+        Fn::Split:
+        - ','
+        - Fn::ImportValue:
+            Fn::Join:
+            - '-'
+            - - cfstack
+              - !Select [1, !Split ["-", Ref: "AWS::StackName"]]
+              - amenino-cf-resources-infra-PrivateSubnets
+    Environment:
+      Variables:
+        LOGGER_LEVEL: !If [ isItProd, "INFO", "DEBUG" ]
+        SUB_ENV_NAME: !Ref SubEnv
+        USER_SESSION_TABLE: !Ref UserSessions
+        REACTIVE_WHATSAPP_SESSIONS_TABLE: !Ref ReactiveWhatsappSessions
+        PW_NOTIFICATION_TABLE: !Ref ProactiveWhatsappActiveNotification
+    Tags:
+      ameninoLambdaAmbiente: !Ref Ambiente
+      ameninoLambdaSubAmbiente: !Ref SubAmbiente
+      ameninoLambdaProjeto: !Ref Projeto
+      ameninoLambdaSquad: !Ref Squad
+
+## ____________________________ RESOURCES 👇 __________________________________
+
+Resources:
+
+## _____________________ RuntimeDependenciesLayer 👇 __________________________
+
+  RuntimeDependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Description: Runtime dependencies for Lambdas
+      ContentUri: ./
+      CompatibleRuntimes:
+        - nodejs18.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Retain
+
+## ____________________________ API 👇 ________________________________________
+
+  salesforceWebhookApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-salesforceWebhookApi"
+      AccessLogSetting:
+        DestinationArn: !GetAtt salesforceWebhookApiLogGroup.Arn
+        Format: "{ context: { requestId: $context.requestId, apiId: $context.apiId, stage: $context.stage, path: $context.path, httpMethod: $context.httpMethod, authorize: { error: $context.authorize.error, latency: $context.authorize.latency, status: $context.authorize.status }, authorizer: { principalId: $context.authorizer.principalId, error: $context.authorizer.error, integrationLatency: $context.authorizer.integrationLatency, integrationStatus: $context.authorizer.integrationStatus, latency: $context.authorizer.latency, requestId: $context.authorizer.requestId, status: $context.authorizer.status }, authenticate: { error: $context.authenticate.error, latency: $context.authenticate.latency, status: $context.authenticate.status }, customDomain: { basePathMatched: $context.customDomain.basePathMatched }, integration: { error: $context.integration.error, integrationStatus: $context.integration.integrationStatus, latency: $context.integration.latency, requestId: $context.integration.requestId, status: $context.integration.status, }, integrationLatency: $context.integrationLatency, integrationStatus: $context.integrationStatus, responseLatency: $context.responseLatency, responseLength $context.responseLength, status: $context.status, error: { message: $context.error.message, messageString: $context.error.messageString, responseType: $context.error.responseType, validationErrorString: $context.error.validationErrorString } } }"
+      StageName: LIVE
+      EndpointConfiguration: 
+        Type: REGIONAL
+      Cors:
+        AllowCredentials: false
+        AllowHeaders: "'*'"
+        AllowMethods: "'OPTIONS,POST'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: salesforce-webhook-api-openapi.yaml
+      Tags:
+        ameninoAPIAmbiente: !Ref Ambiente
+        ameninoAPISubAmbiente: !Ref SubAmbiente
+        ameninoAPIProjeto: !Ref Projeto
+        ameninoAPISquad: !Ref Squad
+
+  BasePathMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Properties:
+      DomainName:
+        Fn::ImportValue:
+          Fn::Join: ["-", ["cfstack", !Select [1, !Split ["-", Ref: "AWS::StackName"]] , "amenino-api-domains-cf-infra", "CustomDomainBr"]]
+      ApiId: !Ref salesforceWebhookApi
+      Stage: !Ref salesforceWebhookApi.Stage
+      ApiMappingKey: "salesforce-msg100"
+
+  ProactiveWhatsappApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-ProactiveWhatsappApi"
+      AccessLogSetting:
+        DestinationArn: !GetAtt ProactiveWhatsappApiLogGroup.Arn
+      StageName: LIVE
+      EndpointConfiguration:
+        Type: REGIONAL
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "v1"
+          title: !Ref AWS::StackName
+        paths:
+          /sendNotification:
+            post:
+              description: "Endpoint GOL to activate the SNS"
+              responses:
+                "200":
+                  description: Accepted
+              x-amazon-apigateway-integration:
+                type: "aws"
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:sns:action/Publish"
+                credentials: !GetAtt StatsApiRole.Arn
+                requestParameters:
+                  integration.request.querystring.Message: "method.request.body"
+                  integration.request.querystring.TopicArn:
+                    !Sub "'${SNSQueuePWStartConversation}'"
+                responses:
+                  default:
+                    statusCode: 200
+          /receiveStartConversation:
+            post:
+              description: "Endpoint to receive conversation"
+              responses:
+                "200":
+                  description: Accepted
+              x-amazon-apigateway-integration:
+                type: "aws"
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:sns:action/Publish"
+                credentials: !GetAtt StatsApiRole.Arn
+                requestParameters:
+                  integration.request.querystring.Message: "method.request.body"
+                  integration.request.querystring.TopicArn:
+                    !Sub "'${SNSQueuePWReceiveStartConversation}'"
+                responses:
+                  default:
+                    statusCode: 200
+          /routing:
+            post:
+              description: "Endpoint for routing"
+              responses:
+                "200":
+                  description: Accepted
+              x-amazon-apigateway-integration:
+                type: "aws"
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:sns:action/Publish"
+                credentials: !GetAtt StatsApiRole.Arn
+                requestParameters:
+                  integration.request.querystring.Message: "method.request.body"
+                  integration.request.querystring.TopicArn:
+                    !Sub "'${SNSQueuePWRouting}'"
+                responses:
+                  default:
+                    statusCode: 200
+          /watsonReceiveMessage:
+            post:
+              description: "Endpoint to send msg to Watson"
+              responses:
+                "200":
+                  description: Accepted
+              x-amazon-apigateway-integration:
+                type: "aws"
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:sns:action/Publish"
+                credentials: !GetAtt StatsApiRole.Arn
+                requestParameters:
+                  integration.request.querystring.Message: "method.request.body"
+                  integration.request.querystring.TopicArn:
+                    !Sub "'${SNSQueuePWWatsonReceiveMessage}'"
+                responses:
+                  default:
+                    statusCode: 200
+          /flight-status:
+            post:
+              responses:
+                "200":
+                  description: "200 response"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                "500":
+                  description: "500 response"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+              #security:
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PWFlightStatus.Arn}/invocations
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+            options:
+              consumes:
+              - application/json
+              produces:
+              - application/json
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: string
+                    Access-Control-Allow-Methods:
+                      type: string
+                    Access-Control-Allow-Headers:
+                      type: string
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+                      method.response.header.Access-Control-Allow-Headers: "'channel,Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,User-Agent'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: when_no_match
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                type: mock
+          /check-in:
+            post:
+              responses:
+                "200":
+                  description: "200 response"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                "500":
+                  description: "500 response"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+              #security:
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PWCheckin.Arn}/invocations
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+            options:
+              consumes:
+              - application/json
+              produces:
+              - application/json
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: string
+                    Access-Control-Allow-Methods:
+                      type: string
+                    Access-Control-Allow-Headers:
+                      type: string
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: 200
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+                      method.response.header.Access-Control-Allow-Headers: "'channel,Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,User-Agent'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: when_no_match
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                type: mock
+      Cors:
+        AllowCredentials: false
+        AllowHeaders: "'*'"
+        AllowMethods: "'OPTIONS,POST'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
+      Tags:
+        ameninoAPIAmbiente: !Ref Ambiente
+        ameninoAPISubAmbiente: !Ref SubAmbiente
+        ameninoAPIProjeto: !Ref Projeto
+        ameninoAPISquad: !Ref Squad
+      Auth:
+        ResourcePolicy:
+          CustomStatements:
+            - Effect: Allow
+              Principal: '*'
+              Action: execute-api:Invoke
+              Resource:
+                - 'execute-api:/*/*/*'
+
+  StatsApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "apigateway.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-topic-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action: "sns:Publish"
+                Effect: "Allow"
+                Resource:
+                  - !Ref SNSQueuePWStartConversation
+                  - !Ref SNSQueuePWReceiveStartConversation
+                  - !Ref SNSQueuePWRouting
+                  - !Ref SNSQueuePWWatsonReceiveMessage
+        - PolicyName: !Sub "${AWS::StackName}-kms-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - "kms:GenerateDataKey"
+                  - "kms:Decrypt"
+                Effect: "Allow"
+                Resource: "*"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+
+  PWBasePathMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Properties:
+      DomainName:
+        Fn::ImportValue:
+          Fn::Join:
+            - "-"
+            - - "cfstack"
+              - !Select [1, !Split ["-", Ref: "AWS::StackName"]]
+              - "amenino-api-domains-cf-infra"
+              - "CustomDomainBr"
+      ApiId: !Ref ProactiveWhatsappApi
+      Stage: !Ref ProactiveWhatsappApi.Stage
+      ApiMappingKey: "proactive-whatsapp"
+
+  KMSFilterMetricsTopic:
+    Type: "AWS::KMS::Key"
+    Properties:
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: KMSFilterMetricsTopic
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  KMSKeyAliasMetricsTopic:
+    Type: "AWS::KMS::Alias"
+    Properties:
+      AliasName: !Sub "alias/${AWS::StackName}-KMSFilterMetricsTopic"
+      TargetKeyId: !Ref KMSFilterMetricsTopic
+
+  SNSQueuePWStartConversation:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: SNSQueuePWStartConversation
+      KmsMasterKeyId: !Ref KMSKeyAliasMetricsTopic
+
+  SNSQueuePWReceiveStartConversation:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: SNSQueuePWReceiveStartConversation
+      KmsMasterKeyId: !Ref KMSKeyAliasMetricsTopic
+
+  SNSQueuePWRouting:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: SNSQueuePWRouting
+      KmsMasterKeyId: !Ref KMSKeyAliasMetricsTopic
+
+  SNSQueuePWWatsonReceiveMessage:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: SNSQueuePWWatsonReceiveMessage
+      KmsMasterKeyId: !Ref KMSKeyAliasMetricsTopic
+
+## ____________________________ DynamoDB 👇 ___________________________________
+
+  UserSessions:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      TableName: !Sub "${AWS::StackName}-user-sessions"
+      AttributeDefinitions: 
+        - AttributeName: "conversation_id"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "conversation_id"
+          KeyType: "HASH"
+      BillingMode: 
+        Fn::If:
+          - isItProd
+          - PROVISIONED
+          - PAY_PER_REQUEST
+      ProvisionedThroughput:
+        Fn::If:
+          - isItProd
+          - ReadCapacityUnits: 10
+            WriteCapacityUnits: 10
+          - !Ref "AWS::NoValue"
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+      - Key: "ameninoDynamoAmbiente"
+        Value: !Ref Ambiente
+      - Key: "ameninoDynamoSubAmbiente"
+        Value: !Ref SubAmbiente
+      - Key: "ameninoDynamoProjeto"
+        Value: !Ref Projeto
+      - Key: "ameninoDynamoSquad"
+        Value: !Ref Squad
+
+  ReactiveWhatsappSessions:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      TableName: !Sub "${AWS::StackName}-reactive-whatsapp-sessions"
+      AttributeDefinitions: 
+        - AttributeName: "conversation_id"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "conversation_id"
+          KeyType: "HASH"
+      BillingMode: 
+        Fn::If:
+          - isItProd
+          - PROVISIONED
+          - PAY_PER_REQUEST
+      ProvisionedThroughput:
+        Fn::If:
+          - isItProd
+          - ReadCapacityUnits: 10
+            WriteCapacityUnits: 10
+          - !Ref "AWS::NoValue"
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+      - Key: "ameninoDynamoAmbiente"
+        Value: !Ref Ambiente
+      - Key: "ameninoDynamoSubAmbiente"
+        Value: !Ref SubAmbiente
+      - Key: "ameninoDynamoProjeto"
+        Value: !Ref Projeto
+      - Key: "ameninoDynamoSquad"
+        Value: !Ref Squad
+
+  ProactiveWhatsappActiveNotification:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-proactive-whatsapp-active-notification"
+      AttributeDefinitions:
+        - AttributeName: "phone_number"
+          AttributeType: "S"
+        - AttributeName: "date"
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: "phone_number"
+          KeyType: "HASH"
+        - AttributeName: "date"
+          KeyType: "RANGE"
+      BillingMode:
+        Fn::If:
+          - isItProd
+          - PROVISIONED
+          - PAY_PER_REQUEST
+      ProvisionedThroughput:
+        Fn::If:
+          - isItProd
+          - ReadCapacityUnits: 10
+            WriteCapacityUnits: 10
+          - !Ref "AWS::NoValue"
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: "ameninoDynamoAmbiente"
+          Value: !Ref Ambiente
+        - Key: "ameninoDynamoSubAmbiente"
+          Value: !Ref SubAmbiente
+        - Key: "ameninoDynamoProjeto"
+          Value: !Ref Projeto
+        - Key: "ameninoDynamoSquad"
+          Value: !Ref Squad
+
+## ____________________________ Step Function 👇 ______________________________
+
+  LoginAuthenticationFlow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-LoginAuthenticationFlow"
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "sfs-role"]]
+      Definition:
+        StartAt: PassSubEnv
+        States:
+          PassSubEnv:
+            Type: Pass
+            Result: !Ref SubEnv
+            ResultPath: $.SubEnv
+            Next: ChoiceFlow
+          ChoiceFlow:
+            Type: Choice
+            Choices:
+              - Variable: $.body.whatsapp_receptivo_channel
+                IsPresent: true
+                Next: LambdaMemberInfo
+              - Variable: $.body.whatsapp_receptivo_channel
+                IsPresent: false
+                Next: LambdaSetLogin
+          LambdaMemberInfo:
+            Type: Task
+            Resource: "arn:aws:states:::lambda:invoke"
+            Parameters:
+              FunctionName:
+                Fn::ImportValue:
+                  Fn::Sub: "cfstack-${SubEnv}-amenino-lambda-members-GetMemberInfoNoAPI"
+              Payload: 
+                token.$: $.body.token_jwt
+            ResultPath: $.ResultLambdaMemberInfoNoAPI
+            Next: ChoiceMemberInfo
+          ChoiceMemberInfo:
+            Type: Choice
+            Choices:
+            - Variable: $.ResultLambdaMemberInfoNoAPI.Payload.body
+              StringMatches: "*status\":\"ACTIVE\",\"memberTier\":\"Diamante*"
+              Next: LambdaSetLogin
+            Default: LambdaDefineFirstMsg
+          LambdaSetLogin:
+            Type: Task
+            Resource: !GetAtt SetLogin.Arn
+            ResultPath: $.ResultLambdaSetLogin
+            Next: PassInputDefineFirstMsg
+          PassInputDefineFirstMsg:
+            Type: Pass
+            Result: "authenticationflow"
+            ResultPath: $.InputDefineFirstMsg.flow
+            Next: LambdaDefineFirstMsg
+          LambdaDefineFirstMsg:
+            Type: Task
+            Resource: !GetAtt DefineFirstMsg.Arn
+            ResultPath: $.ResultLambdaDefineFirstMsg
+            Next: ChoiceSkipPassControl
+          ChoiceSkipPassControl:
+            Type: Choice
+            Choices:
+            - Variable: $.ResultLambdaDefineFirstMsg.skipPassControl
+              BooleanEquals: True
+              Next: Finish
+            Default: LambdaSuncoPassControl
+          LambdaSuncoPassControl:
+            Type: Task
+            Resource: !GetAtt SuncoPassControl.Arn
+            ResultPath: $.ResultLambdaSuncoPassControl
+            End: True
+          Finish:
+            Type: Pass
+            End: true
+      Tags:
+        ameninoStepFunctionAmbiente: !Ref Ambiente
+        ameninoStepFunctionSubAmbiente: !Ref SubAmbiente
+        ameninoStepFunctionProjeto: !Ref Projeto
+        ameninoStepFunctionSquad: !Ref Squad
+
+  SuncoMsgMainFlow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-SuncoMsgMainFlow"
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "sfs-role"]]
+      Definition:
+        StartAt: PassSubEnv
+        States:
+          PassSubEnv:
+            Type: Pass
+            Result: !Ref SubEnv
+            ResultPath: $.SubEnv
+            Next: LambdaDefineFlow
+          LambdaDefineFlow:
+            Type: Task
+            Resource: !GetAtt DefineFlow.Arn
+            ResultPath: $.ResultLambdaDefineFlow
+            Catch:
+              - ErrorEquals:
+                  - ParameterNotFound
+                ResultPath: $.ErrorLambdaDefineFlow
+                Next: LambdaRepassToOrchestrator
+              - ErrorEquals:
+                  - ValidationError
+                ResultPath: $.ErrorLambdaDefineFlow
+                Next: Finish
+            Next: ChoiceFlow
+          ChoiceFlow:
+            Type: Choice
+            Choices:
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "ameninoviagens-vendas-b2c-whats"
+              Next: SfameninoViagensB2C
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "MissingIntegrationId"
+              Next: Finish
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "WhatsAppAtendimentoReceptivoamenino"
+              Next: SfLoginFlow
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "GAL"
+              Next: LambdaDefineFirstMsg
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "GIL"
+              Next: LambdaDefineFirstMsg
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "WhatsappProativo"
+              Next: LambdaSuncoPassControl
+            - And:
+              - Variable: $.ResultLambdaDefineFlow.channel
+                StringEquals: "ameninoViagens"
+              - Variable: $.ResultLambdaDefineFlow.oldFlow
+                StringEquals: "false"
+              Next: SfLoginFlow
+            - And:
+              - Variable: $.ResultLambdaDefineFlow.channel
+                StringEquals: "ameninoViagens"
+              - Variable: $.ResultLambdaDefineFlow.oldFlow
+                StringEquals: "true"
+              Next: LambdaSuncoPassControl
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "DefaultWhatsApp"
+              Next: LambdaSuncoPassControl
+            - Or:
+              - Variable: $.ResultLambdaDefineFlow.channel
+                StringEquals: "GOL-B2B"
+              - Variable: $.ResultLambdaDefineFlow.channel
+                StringEquals: "reset-senha-whatsapp"
+              Next: LambdaDefineFirstMsg
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "magno"
+              Next: LambdaMagnoValidateConversation
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "whatsapp-b2e-fraude"
+              Next: LambdaWhatsAppB2EFraud
+            - Variable: $.ResultLambdaDefineFlow.channel
+              StringEquals: "ameninoViagensB2B"
+              Next: LambdaDefineFirstMsg
+            Default: LambdaRepassToOrchestrator
+          SfameninoViagensB2C:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              Input:
+                body.$: $.body
+                SubEnv.$: $.SubEnv
+                ResultLambdaDefineFlow.$: $.ResultLambdaDefineFlow
+              StateMachineArn: !GetAtt ameninoViagensB2CSellWhats.Arn
+            ResultPath: $.ResultSfameninoViagensB2C
+            Next: LambdaSuncoPassControl
+          LambdaMagnoValidateConversation:
+            Type: Task
+            Resource:
+              Fn::ImportValue:
+                Fn::Sub: "cfstack-${SubEnv}-amenino-lambda-magno-conversation-validate"
+            ResultPath: $.ResultLambdaMagnoValidateConversation
+            Catch:
+              - ErrorEquals:
+                  - MissingPhoneError
+                ResultPath: $.ErrorLambdaMagnoValidateConversation
+                Next: Finish
+            Next: LambdaDefineFirstMsg
+          LambdaWhatsAppB2EFraud:
+            Type: Task
+            Resource:
+              Fn::ImportValue:
+                Fn::Sub: "cfstack-${SubEnv}-amenino-lambda-b2e-salesforce-callbackB2e" 
+            ResultPath: $.ResultLambdaWhatsAppB2EFraud
+            Next: Finish
+          SfLoginFlow:
+            Type: Task
+            Resource: arn:aws:states:::states:startExecution.sync:2
+            Parameters:
+              Input:
+                body.$: $.body
+                SubEnv.$: $.SubEnv
+                ResultLambdaDefineFlow.$: $.ResultLambdaDefineFlow
+              StateMachineArn: !GetAtt LoginFlow.Arn
+            ResultPath: $.ResultSfLoginFlow
+            Next: Finish
+          LambdaDefineFirstMsg:
+            Type: Task
+            Resource: !GetAtt DefineFirstMsg.Arn
+            ResultPath: $.ResultLambdaDefineFirstMsg
+            Next: ChoiceSkipSuncoPassControl
+          ChoiceSkipSuncoPassControl:
+            Type: Choice
+            Choices:
+            - Or:
+              - Variable: $.ResultLambdaDefineFlow.skipSuncoPassControl
+                BooleanEquals: True
+              - And:
+                - Variable: $.ResultLambdaMagnoValidateConversation.isMagno
+                  IsPresent: True
+                - Variable: $.ResultLambdaMagnoValidateConversation.isMagno
+                  BooleanEquals: False
+              Next: Finish
+            Default: LambdaSuncoPassControl
+          LambdaSuncoPassControl:
+            Type: Task
+            Resource: !GetAtt SuncoPassControl.Arn
+            ResultPath: $.ResultLambdaSuncoPassControl
+            Next: Finish
+          LambdaRepassToOrchestrator:
+            Type: Task
+            Resource: !GetAtt RepassToOrchestrator.Arn
+            ResultPath: $.ResultLambdaRepassToOrchestrator
+            Next: Finish
+          Finish:
+            Type: Pass
+            End: true
+      Tags:
+        ameninoStepFunctionAmbiente: !Ref Ambiente
+        ameninoStepFunctionSubAmbiente: !Ref SubAmbiente
+        ameninoStepFunctionProjeto: !Ref Projeto
+        ameninoStepFunctionSquad: !Ref Squad
+
+  ameninoViagensB2CSellWhats:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-SVB2CSell"
+      Role:
+        Fn::ImportValue: 
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "sfs-role"]]
+      Definition:
+        StartAt: LambdaDefineFirstMsg
+        States:
+          LambdaDefineFirstMsg:
+            Type: Task
+            Resource: !GetAtt DefineFirstMsg.Arn
+            ResultPath: $.ResultLambdaDefineFirstMsg
+            End: true
+      Tags:
+        ameninoStepFunctionAmbiente: !Ref Ambiente
+        ameninoStepFunctionSubAmbiente: !Ref SubAmbiente
+        ameninoStepFunctionProjeto: !Ref Projeto
+        ameninoStepFunctionSquad: !Ref Squad
+
+  LoginFlow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-LoginFlow"
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "sfs-role"]]
+      Definition:
+        StartAt: LambdaVerifyLogin
+        States:
+          LambdaVerifyLogin:
+            Type: Task
+            Resource: !GetAtt VerifyLogin.Arn
+            ResultPath: $.ResultLambdaVerifyLogin
+            Next: ChoiceUserLogged
+          ChoiceUserLogged:
+            Type: Choice
+            Choices:
+            - Variable: $.ResultLambdaVerifyLogin.user_logged
+              BooleanEquals: True
+              Next: LambdaSuncoPassControl
+            - And:
+              - Variable: $.ResultLambdaVerifyLogin.user_logged
+                BooleanEquals: False
+              - Variable: $.ResultLambdaVerifyLogin.url_sent
+                BooleanEquals: False
+              Next: LambdaSetLoginSent
+            - And:
+              - Variable: $.ResultLambdaVerifyLogin.user_logged
+                BooleanEquals: False
+              - Variable: $.ResultLambdaVerifyLogin.url_sent
+                BooleanEquals: True
+              Next: LambdaDefineFirstMsg
+          LambdaSetLoginSent:
+            Type: Task
+            Resource: !GetAtt SetLoginSent.Arn
+            ResultPath: $.ResultLambdaSetLoginSent
+            Next: Finish
+          LambdaDefineFirstMsg:
+            Type: Task
+            Resource: !GetAtt DefineFirstMsg.Arn
+            ResultPath: $.ResultLambdaDefineFirstMsg
+            Next: Finish
+          LambdaSuncoPassControl:
+            Type: Task
+            Resource: !GetAtt SuncoPassControl.Arn
+            ResultPath: $.ResultLambdaSuncoPassControl
+            Next: Finish
+          Finish:
+            Type: Pass
+            End: true
+      Tags:
+        ameninoStepFunctionAmbiente: !Ref Ambiente
+        ameninoStepFunctionSubAmbiente: !Ref SubAmbiente
+        ameninoStepFunctionProjeto: !Ref Projeto
+        ameninoStepFunctionSquad: !Ref Squad
+
+## ____________________________ Lambdas 👇 ____________________________________
+
+  DefineFirstMsg:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-DefineFirstMsg"
+      Handler: dist/handlers/handlerDefineFirstMsg.handler
+      Role:
+        Fn::ImportValue: 
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  SuncoPassControl:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-SuncoPassControl"
+      Handler: dist/handlers/handlerSuncoPassControl.handler
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  RepassToOrchestrator:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-RepassToOrchestrator"
+      Handler: dist/handlers/handlerRepassToOrchestrator.handler
+      Role:
+        Fn::ImportValue: 
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  DefineFlow:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-DefineFlow"
+      Handler: dist/handlers/handlerDefineFlow.handler
+      Role:
+        Fn::ImportValue: 
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  SetLogin:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-SetLogin"
+      Handler: dist/handlers/handlerSetLogin.handler
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  VerifyLogin:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-VerifyLogin"
+      Handler: dist/handlers/handlerVerifyLogin.handler
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  SetLoginSent:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-SetLoginSent"
+      Handler: dist/handlers/handlerSetLoginSent.handler
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  PWStartConversation:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWStartConversation"
+      Handler: dist/handlers/proactive/handlerPWStartConversation.handler
+      Events:
+        SNSQueueEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SNSQueuePWStartConversation
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  PWStartConversationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWStartConversation}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  PWReceiveStartConversation:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWReceiveStartConv"
+      Handler: dist/handlers/proactive/handlerPWReceiveStartConversation.handler
+      Events:
+        SNSQueueEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SNSQueuePWReceiveStartConversation
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - events:PutRule
+                - events:PutTargets
+                - events:EnableRule
+                - events:CreateSchedule
+                - scheduler:CreateSchedule
+              Resource: "*"
+      Environment:
+        Variables:
+          LAMBDA_DEQUEUE_ARN: !GetAtt PWDequeue.Arn
+          ROLE_LAMBDA_DEQUEUE_ARN: !GetAtt PWDeQueueRole.Arn
+
+  PWReceiveStartConversationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWReceiveStartConversation}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  PWRouting:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWRouting"
+      Handler: dist/handlers/proactive/handlerPWRouting.handler
+      Events:
+        SNSQueueEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SNSQueuePWRouting
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+      Environment:
+        Variables:
+          SIEBEL_AUTH_USERNAME: !Sub
+            - "{{resolve:secretsmanager:${env}/OracleDBSiebel/intef::username}}"
+            - {
+                env:
+                  !If [
+                    isItProd,
+                    "prd",
+                    !If [isItDev, "dev", !If [isItHml1, "hml1", "hml"]],
+                  ],
+              }
+          SIEBEL_AUTH_PASSWORD: !Sub
+            - '{{resolve:secretsmanager:${env}/OracleDBSiebel/intef::password}}'
+            - { env: !If [ isItProd, "prd", !If [ isItDev, "dev", !If [ isItHml1, "hml1", "hml" ] ] ]}
+
+  PWRoutingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWRouting}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  PWWatsonReceiveMessage:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWWatsonReceiveMessage"
+      Handler: dist/handlers/proactive/handlerPWWatsonReceiveMessage.handler
+      Events:
+        SNSQueueEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SNSQueuePWWatsonReceiveMessage
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+
+  PWWatsonReceiveMessageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWWatsonReceiveMessage}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  PWDeQueueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  PWDequeue:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWDequeue"
+      Handler: dist/handlers/proactive/handlerPWDequeue.handler
+      Role: !GetAtt PWDeQueueRole.Arn
+
+  PWDequeueLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWDequeue}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  # LambdaOneEventRule:
+  #   Type: AWS::Events::Rule
+  #   Properties:
+  #     ScheduleExpression: "rate(10 minutes)"
+  #     State: DISABLED
+  #     Targets:
+  #       - Arn: !GetAtt PWDequeue.Arn
+  #         Id: "InvokeLambdaTwo"
+
+  PWFlightStatus:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWFlightStatus"
+      Handler: dist/handlers/proactive/handlerPWFlightStatus.handler
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+      Events:
+        RestApi:
+          Type: Api
+          Properties:
+            Path: /flight-status
+            Method: post
+            RestApiId: !Ref ProactiveWhatsappApi
+
+  PWFlightStatusLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWFlightStatus}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  PWCheckin:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PWCheckin"
+      Handler: dist/handlers/proactive/handlerPWCheckin.handler
+      Role:
+        Fn::ImportValue:
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "lambdas-role"]]
+      Events:
+        RestApi:
+          Type: Api
+          Properties:
+            Path: /check-in
+            Method: post
+            RestApiId: !Ref ProactiveWhatsappApi
+
+  PWCheckinLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PWCheckin}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  CustomAuthorizer:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-CustomAuthorizer"
+      Handler: "dist/handlers/handlerCustomAuthorizer.handler"
+      Role:
+        Fn::ImportValue: 
+          Fn::Join: ["-", [Ref: "AWS::StackName", "infra", "auth-role"]]
+
+
+## ____________________________ Log Groups 👇 _________________________________
+
+  CustomAuthorizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CustomAuthorizer}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  salesforceWebhookApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/${AWS::StackName}-salesforceWebhookApi"
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  ProactiveWhatsappApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/logs/${AWS::StackName}-ProactiveWhatsappApi"
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  DefineFirstMsgLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${DefineFirstMsg}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  SuncoPassControlLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SuncoPassControl}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  RepassToOrchestratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${RepassToOrchestrator}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  DefineFlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${DefineFlow}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  SetLoginLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SetLogin}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  VerifyLoginLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${VerifyLogin}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
+
+  SetLoginSentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SetLoginSent}
+      RetentionInDays: 30
+      Tags:
+        - Key: ameninoLogGroupAmbiente
+          Value: !Ref Ambiente
+        - Key: ameninoLogGroupSubAmbiente
+          Value: !Ref SubAmbiente
+        - Key: ameninoLogGroupProjeto
+          Value: !Ref Projeto
+        - Key: ameninoLogGroupSquad
+          Value: !Ref Squad
