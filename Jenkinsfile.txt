@@ -2,7 +2,7 @@ PipelineLambda([
     lambdaFunctionDir: "functions",
     isCloudFormation: true,
     runUnitTest: true,
-    lambdaBuildType: "nodejs",
+    buildType: "nodejs",
     lambdaNodeVersion : "16.16.0",
     nodeVer: "16.16.0"
 ])
