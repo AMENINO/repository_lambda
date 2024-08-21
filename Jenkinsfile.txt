@@ -1,8 +1,10 @@
+@Library('SmilesCommon@release-nodejs-alpine') _
+
 PipelineLambda([
     lambdaFunctionDir: "functions",
     isCloudFormation: true,
     runUnitTest: true,
     buildType: "nodejs",
-    lambdaNodeVersion : "16.16.0",
-    nodeVer: "16.16.0"
+    lambdaNodeVersion: "20.16.0",
+    nodeVer: "20.16.0"
 ])
